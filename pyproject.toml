@@ -1,0 +1,37 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+extend-exclude = [
+  "orig/",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors
+  "F",  # pyflakes
+  "B",  # flake8-bugbear
+  "UP", # pyupgrade
+  "I",  # isort (import sorting)
+]
+ignore = [
+  "E501",  # handled by Black
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+extend-exclude = "orig/"
+[project]
+name = "coldwatch-staging"
+version = "0.0.0"
+description = "Staging snapshot for ColdWatch accessibility logger"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+dev = [
+  "pre-commit>=3.7",
+  "ruff>=0.6",
+  "black>=24.8",
+  "pytest>=8.3",
+]
+

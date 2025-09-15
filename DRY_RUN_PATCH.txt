@@ -1,0 +1,31 @@
+ColdWatch Extraction — Phase 1 Dry-Run Patch Plan
+
+Goal: Describe mechanical file moves renaming into the future standalone ColdWatch repo without changing logic.
+
+Proposed repo structure (new project):
+- pyproject.toml
+- src/coldwatch/
+  - __init__.py
+  - cli.py             (entrypoints: run, scan, analyze)
+  - core.py            (event loop, registry, handlers)
+  - scanner.py         (tree scan utilities)
+  - db.py              (SQLite access, schema)
+  - privacy.py         (redaction, safe defaults)
+  - types.py           (typed DTOs)
+- tests/
+- examples/
+
+Mechanical source mapping from current snapshot:
+- accessibility-logger/accessibility_logger.py -> src/coldwatch/core.py (split into core/scanner/db)
+- accessibility-logger/run_test.py -> examples/run_test.py (adapt imports, CLI)
+- accessibility-logger/mock_app.py -> examples/mock_app.py
+- accessibility-logger/analyze_data.py -> src/coldwatch/cli.py: analyze subcommand
+- accessibility-logger/test-features.py -> Omit from ColdWatch (belongs to parent workspace); keep note in MIGRATION.md
+
+Additional mechanical tasks (later in Phase 2):
+- Create minimal CLI wiring in `cli.py` calling existing functions after splitting.
+- Move schema creation from constructor to db.py module method.
+- No behavior changes; only module boundaries and imports.
+
+Not executed in Phase 1; documented for traceability.
+

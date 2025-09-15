@@ -1,0 +1,17 @@
+name: CI (Push)
+
+on:
+  push:
+    branches: ["**"]
+
+jobs:
+  precommit:
+    uses: ./.github/workflows/precommit.yml
+
+  reminder:
+    name: Expand CI reminder
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reminder
+        run: echo "::warning::Reminder: expand CI (caching, test matrix, integration) as Phase 2 progresses."
+

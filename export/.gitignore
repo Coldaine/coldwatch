@@ -1,0 +1,6 @@
+# Logs and databases
+*.log
+accessibility_log.db
+__pycache__/
+.pytest_cache/
+
