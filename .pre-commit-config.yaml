@@ -4,8 +4,31 @@ repos:
     hooks:
       - id: ruff
         args: ["--fix"]
+        exclude: ^(orig|export)/
   - repo: https://github.com/psf/black
     rev: 24.8.0
     hooks:
       - id: black
-
+        exclude: ^(orig|export)/
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: pytest (unit)
+        entry: uvx
+        language: system
+        pass_filenames: false
+        stages: [commit]
+        args:
+          - pytest
+          - -m
+          - not integration
+      - id: pytest-integration
+        name: pytest (integration)
+        entry: uvx
+        language: system
+        pass_filenames: false
+        stages: [push]
+        args:
+          - pytest
+          - -m
+          - integration

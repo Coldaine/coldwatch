@@ -1,3 +1,17 @@
+Metadata-Version: 2.4
+Name: coldwatch
+Version: 0.1.0
+Summary: AT-SPI accessibility logger with CLI and analysis tools
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: loguru>=0.7
+Provides-Extra: dev
+Requires-Dist: pre-commit>=3.7; extra == "dev"
+Requires-Dist: ruff>=0.6; extra == "dev"
+Requires-Dist: black>=24.8; extra == "dev"
+Requires-Dist: pytest>=8.3; extra == "dev"
+Requires-Dist: pytest-cov>=5.0; extra == "dev"
+
 # ColdWatch
 
 ColdWatch is a Linux-first accessibility logger built on AT-SPI. It captures text widgets and related events from running applications, stores them in SQLite, and provides a CLI for runtime control and database analysis.

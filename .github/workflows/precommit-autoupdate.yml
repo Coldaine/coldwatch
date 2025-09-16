@@ -1,0 +1,25 @@
+name: pre-commit-autoupdate
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  autoupdate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - uses: astral-sh/setup-uv@v1
+      - name: Run pre-commit autoupdate
+        run: uvx pre-commit autoupdate
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/pre-commit-autoupdate
+          title: "chore: pre-commit autoupdate"
+          commit-message: "chore: pre-commit autoupdate"
+          body: "Automated pre-commit autoupdate"

@@ -1,17 +1,107 @@
-name: CI (Push)
+name: ci-commit
 
 on:
   push:
-    branches: ["**"]
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  precommit:
+  pre-commit:
     uses: ./.github/workflows/precommit.yml
 
-  reminder:
-    name: Expand CI reminder
+  lint:
     runs-on: ubuntu-latest
+    needs: pre-commit
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - name: Reminder
-        run: echo "::warning::Reminder: expand CI (caching, test matrix, integration) as Phase 2 progresses."
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v1
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+      - name: Run Black
+        run: uvx black --check .
+      - name: Run Ruff
+        run: uvx ruff check .
 
+  tests:
+    runs-on: ubuntu-latest
+    needs: pre-commit
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v1
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+      - name: Install package
+        run: uv pip install -e .[dev]
+      - name: Run pytest (unit)
+        run: |
+          if [ "${{ matrix.python-version }}" = "3.12" ]; then
+            uvx pytest -m "not integration" --cov=coldwatch --cov-report=xml
+          else
+            uvx pytest -m "not integration"
+          fi
+      - name: Upload coverage artifact
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  integration:
+    if: ${{ vars.RUN_ATSPI_TESTS == 'true' }}
+    runs-on: ubuntu-latest
+    needs: [lint, tests]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pyatspi python3-gi gir1.2-gtk-3.0 xvfb dbus-x11 accerciser
+          sudo mkdir -p /run/user/$(id -u)
+          sudo chown $(id -u):$(id -g) /run/user/$(id -u)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v1
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-integration-${{ hashFiles('pyproject.toml') }}
+      - name: Install package
+        run: uv pip install -e .[dev]
+      - name: Run integration tests
+        env:
+          COLDWATCH_INTEGRATION_ARTIFACTS: integration-artifacts
+        run: |
+          mkdir -p "$COLDWATCH_INTEGRATION_ARTIFACTS"
+          uvx pytest -m integration
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coldwatch-headless-artifacts
+          path: integration-artifacts
+          if-no-files-found: warn

@@ -1,0 +1,2 @@
+[console_scripts]
+coldwatch = coldwatch.cli:main
