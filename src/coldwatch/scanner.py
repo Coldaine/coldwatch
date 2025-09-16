@@ -69,11 +69,15 @@ def walk_tree(conn: Any, cfg: RunConfig, state: ScannerState) -> None:
                 app = desktop.getChildAtIndex(index)
                 app_name = getattr(app, 'name', 'Unknown')
 
+                # Always log discovered apps at INFO level
+                scanner_logger.info(f"Discovered application {index + 1}/{app_count}: {app_name}")
+
                 if not _should_process_app(app, cfg):
-                    scanner_logger.debug(f"Skipping application: {app_name}")
+                    scanner_logger.info(f"Skipping application: {app_name}")
                     continue
 
-                scanner_logger.debug(f"Processing application {index + 1}/{app_count}: {app_name}")
+                scanner_logger.info(f"Processing application {index + 1}/{app_count}: {app_name}")
+                scanner_logger.debug(f"Application details: {app}")
                 _scan_widget(app, conn, cfg, state, depth=0)
                 processed_apps += 1
 
