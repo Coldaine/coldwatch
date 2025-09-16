@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from . import db
+from .logging_config import get_logger, log_atspi_event, log_exception
 from .types import RunConfig
 
 if TYPE_CHECKING:  # pragma: no cover - for type checkers only
@@ -22,28 +23,69 @@ class ScannerState:
 
 
 def wait_for_registry(timeout: float, poll_interval: float = 0.5) -> bool:
+    scanner_logger = get_logger("scanner")
+    scanner_logger.debug(f"Waiting for AT-SPI registry (timeout: {timeout}s, poll interval: {poll_interval}s)")
+
     import pyatspi
 
     start = time.time()
+    attempt = 0
     while True:
+        attempt += 1
         try:
-            pyatspi.Registry.getDesktop(0)
+            desktop = pyatspi.Registry.getDesktop(0)
+            elapsed = time.time() - start
+            scanner_logger.info(f"AT-SPI registry available after {elapsed:.2f}s ({attempt} attempts)")
+            scanner_logger.debug(f"Desktop object: {desktop}")
             return True
-        except Exception:
-            if time.time() - start >= timeout:
+        except Exception as exc:
+            elapsed = time.time() - start
+            if elapsed >= timeout:
+                scanner_logger.error(f"AT-SPI registry timeout after {elapsed:.2f}s ({attempt} attempts)")
+                scanner_logger.debug(f"Last error: {exc}")
                 return False
+
+            if attempt % 10 == 0:  # Log every 10 attempts
+                scanner_logger.debug(f"Still waiting for AT-SPI registry... (attempt {attempt}, {elapsed:.1f}s elapsed)")
+
             time.sleep(poll_interval)
 
 
 def walk_tree(conn: Any, cfg: RunConfig, state: ScannerState) -> None:
+    scanner_logger = get_logger("scanner")
+    scanner_logger.info("Starting accessibility tree walk")
+
     import pyatspi
 
-    desktop = pyatspi.Registry.getDesktop(0)
-    for index in range(desktop.childCount):
-        app = desktop.getChildAtIndex(index)
-        if not _should_process_app(app, cfg):
-            continue
-        _scan_widget(app, conn, cfg, state, depth=0)
+    start_time = time.time()
+    try:
+        desktop = pyatspi.Registry.getDesktop(0)
+        app_count = desktop.childCount
+        scanner_logger.info(f"Found {app_count} applications on desktop")
+
+        processed_apps = 0
+        for index in range(app_count):
+            try:
+                app = desktop.getChildAtIndex(index)
+                app_name = getattr(app, 'name', 'Unknown')
+
+                if not _should_process_app(app, cfg):
+                    scanner_logger.debug(f"Skipping application: {app_name}")
+                    continue
+
+                scanner_logger.debug(f"Processing application {index + 1}/{app_count}: {app_name}")
+                _scan_widget(app, conn, cfg, state, depth=0)
+                processed_apps += 1
+
+            except Exception as exc:
+                scanner_logger.warning(f"Error processing application at index {index}: {exc}")
+
+        elapsed = time.time() - start_time
+        scanner_logger.info(f"Tree walk completed: {processed_apps}/{app_count} apps processed in {elapsed:.2f}s")
+
+    except Exception as exc:
+        log_exception(scanner_logger, "Error during accessibility tree walk")
+        raise
 
 
 def subscribe_events(conn: Any, cfg: RunConfig, state: ScannerState) -> None:

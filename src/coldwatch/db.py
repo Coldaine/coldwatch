@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+from .logging_config import get_logger, log_database_operation, log_exception
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -66,17 +69,50 @@ CREATE TABLE IF NOT EXISTS object_registry (
 
 @contextmanager
 def db(path: str) -> Generator[sqlite3.Connection, None, None]:
+    db_logger = get_logger("db")
+    db_logger.debug(f"Opening database connection to {path}")
+
+    start_time = time.time()
     conn = sqlite3.connect(path)
+    connection_time = time.time() - start_time
+
+    if connection_time > 0.1:  # Log slow connections
+        db_logger.warning(f"Slow database connection: {connection_time:.3f}s to {path}")
+    else:
+        db_logger.debug(f"Database connection established in {connection_time:.3f}s")
+
     try:
         yield conn
+        commit_start = time.time()
         conn.commit()
+        commit_time = time.time() - commit_start
+
+        if commit_time > 0.5:  # Log slow commits
+            db_logger.warning(f"Slow database commit: {commit_time:.3f}s")
+        else:
+            db_logger.debug(f"Database transaction committed in {commit_time:.3f}s")
+    except Exception as exc:
+        db_logger.error(f"Database transaction failed, rolling back: {exc}")
+        conn.rollback()
+        raise
     finally:
+        db_logger.debug(f"Closing database connection to {path}")
         conn.close()
 
 
 def initialize(path: str) -> None:
-    with sqlite3.connect(path) as conn:
-        conn.executescript(SCHEMA)
+    db_logger = get_logger("db")
+    db_logger.info(f"Initializing database schema at {path}")
+
+    start_time = time.time()
+    try:
+        with sqlite3.connect(path) as conn:
+            conn.executescript(SCHEMA)
+            execution_time = time.time() - start_time
+            db_logger.info(f"Database schema initialized successfully in {execution_time:.3f}s")
+    except sqlite3.Error as exc:
+        log_exception(db_logger, f"Failed to initialize database schema at {path}")
+        raise
 
 
 @dataclass(slots=True)
@@ -128,86 +164,149 @@ def _dump_json(value: Any) -> str:
 
 
 def log_event(conn: sqlite3.Connection, record: EventRecord) -> None:
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO events
-        (timestamp, event_type, app_name, object_id, object_role, object_name,
-         detail1, detail2, source_info)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            record.timestamp,
-            record.event_type,
-            record.app_name,
-            record.object_id,
-            record.object_role,
-            record.object_name,
-            record.detail1,
-            record.detail2,
-            _dump_json(record.source_info),
-        ),
-    )
+    db_logger = get_logger("db")
+
+    start_time = time.time()
+    try:
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO events
+            (timestamp, event_type, app_name, object_id, object_role, object_name,
+             detail1, detail2, source_info)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.timestamp,
+                record.event_type,
+                record.app_name,
+                record.object_id,
+                record.object_role,
+                record.object_name,
+                record.detail1,
+                record.detail2,
+                _dump_json(record.source_info),
+            ),
+        )
+        execution_time = time.time() - start_time
+
+        log_database_operation(
+            db_logger,
+            "INSERT",
+            "events",
+            cursor.rowcount,
+            execution_time
+        )
+
+        if cursor.rowcount == 0:
+            db_logger.debug(f"Event already exists (ignored): {record.event_type} from {record.app_name}")
+
+    except sqlite3.Error as exc:
+        log_exception(db_logger, f"Failed to log event: {record.event_type}")
+        raise
 
 
 def store_snapshot(conn: sqlite3.Connection, record: SnapshotRecord) -> bool:
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO text_snapshots
-        (timestamp, object_id, app_name, object_role, object_name, text_content,
-         text_hash, char_count, can_read, can_write, interfaces, states, bounds)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            record.timestamp,
-            record.object_id,
-            record.app_name,
-            record.object_role,
-            record.object_name,
-            record.text_content,
-            record.text_hash,
-            record.char_count,
-            int(record.can_read),
-            int(record.can_write),
-            _dump_json(record.interfaces),
-            _dump_json(record.states),
-            _dump_json(record.bounds),
-        ),
-    )
-    return cursor.rowcount > 0
+    db_logger = get_logger("db")
+
+    start_time = time.time()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO text_snapshots
+            (timestamp, object_id, app_name, object_role, object_name, text_content,
+             text_hash, char_count, can_read, can_write, interfaces, states, bounds)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.timestamp,
+                record.object_id,
+                record.app_name,
+                record.object_role,
+                record.object_name,
+                record.text_content,
+                record.text_hash,
+                record.char_count,
+                int(record.can_read),
+                int(record.can_write),
+                _dump_json(record.interfaces),
+                _dump_json(record.states),
+                _dump_json(record.bounds),
+            ),
+        )
+        execution_time = time.time() - start_time
+        was_inserted = cursor.rowcount > 0
+
+        log_database_operation(
+            db_logger,
+            "INSERT",
+            "text_snapshots",
+            cursor.rowcount,
+            execution_time
+        )
+
+        if was_inserted:
+            db_logger.debug(f"Stored text snapshot: {record.app_name}/{record.object_role} ({record.char_count} chars)")
+        else:
+            db_logger.debug(f"Text snapshot already exists (ignored): {record.object_id}")
+
+        return was_inserted
+
+    except sqlite3.Error as exc:
+        log_exception(db_logger, f"Failed to store text snapshot for {record.object_id}")
+        raise
 
 
 def update_registry(conn: sqlite3.Connection, record: RegistryRecord) -> None:
-    conn.execute(
-        """
-        INSERT INTO object_registry
-        (object_id, app_name, object_role, object_name, last_seen,
-         is_text_widget, interfaces, states, bounds, last_text_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(object_id) DO UPDATE SET
-         app_name=excluded.app_name,
-         object_role=excluded.object_role,
-         object_name=excluded.object_name,
-         last_seen=excluded.last_seen,
-         is_text_widget=excluded.is_text_widget,
-         interfaces=excluded.interfaces,
-         states=excluded.states,
-         bounds=excluded.bounds,
-         last_text_hash=excluded.last_text_hash
-        """,
-        (
-            record.object_id,
-            record.app_name,
-            record.object_role,
-            record.object_name,
-            record.last_seen,
-            int(record.is_text_widget),
-            _dump_json(record.interfaces),
-            _dump_json(record.states),
-            _dump_json(record.bounds),
-            record.last_text_hash,
-        ),
-    )
+    db_logger = get_logger("db")
+
+    start_time = time.time()
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO object_registry
+            (object_id, app_name, object_role, object_name, last_seen,
+             is_text_widget, interfaces, states, bounds, last_text_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(object_id) DO UPDATE SET
+             app_name=excluded.app_name,
+             object_role=excluded.object_role,
+             object_name=excluded.object_name,
+             last_seen=excluded.last_seen,
+             is_text_widget=excluded.is_text_widget,
+             interfaces=excluded.interfaces,
+             states=excluded.states,
+             bounds=excluded.bounds,
+             last_text_hash=excluded.last_text_hash
+            """,
+            (
+                record.object_id,
+                record.app_name,
+                record.object_role,
+                record.object_name,
+                record.last_seen,
+                int(record.is_text_widget),
+                _dump_json(record.interfaces),
+                _dump_json(record.states),
+                _dump_json(record.bounds),
+                record.last_text_hash,
+            ),
+        )
+        execution_time = time.time() - start_time
+
+        log_database_operation(
+            db_logger,
+            "UPSERT",
+            "object_registry",
+            cursor.rowcount,
+            execution_time
+        )
+
+        db_logger.debug(f"Updated registry for {record.app_name}/{record.object_role}: {record.object_id}")
+
+    except sqlite3.Error as exc:
+        log_exception(db_logger, f"Failed to update registry for {record.object_id}")
+        raise
 
 
 def utcnow() -> str:

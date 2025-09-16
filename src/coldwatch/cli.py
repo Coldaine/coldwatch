@@ -7,6 +7,7 @@ from loguru import logger
 
 from .analyze import summarize_db
 from .core import run_logger
+from .logging_config import setup_logging, get_logger
 from .types import RunConfig
 
 
@@ -84,16 +85,34 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "run":
-        cfg = _config_from_args(args)
-        return run_logger(cfg)
+    # Set up early logging for CLI
+    if hasattr(args, 'log_level'):
+        setup_logging(log_level=args.log_level)
+    else:
+        setup_logging()
 
-    if args.command == "analyze":
-        summarize_db(args.db)
-        return 0
+    cli_logger = get_logger("cli")
+    cli_logger.debug(f"ColdWatch CLI invoked with command: {args.command}")
 
-    logger.error("Unknown command: {}", args.command)
-    return 4
+    try:
+        if args.command == "run":
+            cli_logger.info("Starting accessibility logger")
+            cfg = _config_from_args(args)
+            return run_logger(cfg)
+
+        if args.command == "analyze":
+            cli_logger.info(f"Analyzing database: {args.db}")
+            summarize_db(args.db)
+            cli_logger.info("Database analysis completed")
+            return 0
+
+        cli_logger.error(f"Unknown command: {args.command}")
+        logger.error("Unknown command: {}", args.command)
+        return 4
+
+    except Exception as exc:
+        cli_logger.error(f"CLI error: {exc}")
+        raise
 
 
 if __name__ == "__main__":  # pragma: no cover
